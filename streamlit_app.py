@@ -120,7 +120,7 @@ def create_word(content, topic, grade_info):
     return buffer
 
 # --- 5. GIAO DIỆN CHÍNH ---
-st.markdown("<h1 style='text-align: center; color: #004d99;'>🛠️ HỆ THỐNG SOẠN ĐỀ (AUTO-FIX 404)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #004d99;'>🛠️ PHẦN MỀM SOẠN ĐỀ 2.0</h1>", unsafe_allow_html=True)
 
 with st.sidebar:
     st.success(f"✅ Đã nạp {len(API_KEYS)} Key")
