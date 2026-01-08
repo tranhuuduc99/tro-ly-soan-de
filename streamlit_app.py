@@ -15,7 +15,7 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=100)
     st.header("⚙️ CẤU HÌNH")
     
-    # Lấy API Key từ Secrets hoặc nhập tay
+    # Lấy API Key
     api_key = None
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
@@ -33,42 +33,56 @@ with st.sidebar:
          "4. Hỗ trợ Giáo dục hòa nhập"]
     )
 
-# --- 4. HÀM KẾT NỐI AI (DÙNG GEMINI-PRO CHO ỔN ĐỊNH) ---
+# --- 4. HÀM KẾT NỐI AI (CƠ CHẾ 'THỬ ĐẾN KHI ĐƯỢC') ---
 def get_ai_response(prompt):
-    # Cấu hình AI
     genai.configure(api_key=api_key)
     
-    # Dùng gemini-pro (Bản ổn định nhất, không bao giờ lỗi 404)
-    model = genai.GenerativeModel('gemini-pro') 
+    # Danh sách các Model sẽ thử lần lượt
+    cac_model_thu = [
+        'gemini-1.5-flash',       # Ưu tiên 1: Nhanh, miễn phí nhiều
+        'gemini-1.5-flash-latest',# Ưu tiên 2: Bản mới nhất của Flash
+        'gemini-1.0-pro',         # Ưu tiên 3: Bản ổn định cũ
+        'gemini-pro'              # Ưu tiên 4: Bản gốc
+    ]
     
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"⚠️ Lỗi kết nối: {e}"
+    loi_cuoi_cung = ""
+    
+    for ten_model in cac_model_thu:
+        try:
+            # Thử kết nối model này
+            model = genai.GenerativeModel(ten_model)
+            response = model.generate_content(prompt)
+            return response.text # Nếu thành công thì trả về kết quả ngay
+        except Exception as e:
+            # Nếu lỗi thì bỏ qua, thử cái tiếp theo trong danh sách
+            loi_cuoi_cung = e
+            continue
+            
+    # Nếu thử hết danh sách mà vẫn lỗi
+    return f"⚠️ Lỗi kết nối (Đã thử mọi cách): {loi_cuoi_cung}"
 
 # --- 5. XỬ LÝ CHỨC NĂNG ---
 if not api_key:
     st.warning("👈 Vui lòng nhập API Key để bắt đầu!")
     st.stop()
 
-# Xử lý nút bấm chung
 def xu_ly_ai(prompt_text, button_text="🚀 THỰC HIỆN"):
     if st.button(button_text, type="primary"):
-        if noi_dung or tu_khoa: # Kiểm tra xem đã nhập liệu chưa
-            with st.spinner("AI đang suy nghĩ... (Mất khoảng 3-5 giây)"):
+        if noi_dung or tu_khoa:
+            with st.spinner("AI đang xử lý..."):
                 ket_qua = get_ai_response(prompt_text)
                 if "⚠️ Lỗi" in ket_qua:
                     st.error(ket_qua)
+                    st.caption("Gợi ý: Thầy hãy vào phần Manage App -> Reboot App để cập nhật lại hệ thống.")
                 else:
                     st.success("✅ Đã xong! Kết quả bên dưới:")
                     st.markdown(ket_qua)
         else:
-            st.error("⚠️ Thầy cô chưa nhập nội dung!")
+            st.error("⚠️ Chưa nhập nội dung!")
 
 # === CHỨC NĂNG 1: TRẮC NGHIỆM ===
 if "1." in menu:
-    st.header("📝 1. SOẠN TRẮC NGHIỆM (4 ĐÁP ÁN)")
+    st.header("📝 1. SOẠN TRẮC NGHIỆM")
     col1, col2 = st.columns([1, 2])
     with col1:
         mon = st.text_input("Môn:", value="Lịch Sử 9")
@@ -76,7 +90,7 @@ if "1." in menu:
         do_kho = st.select_slider("Mức độ:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
     with col2:
         noi_dung = st.text_area("Dán bài học:", height=150)
-        tu_khoa = "dummy" # Biến giả để qua bước kiểm tra
+        tu_khoa = "dummy"
     
     prompt = f"Đóng vai GV môn {mon}. Soạn {sl} câu trắc nghiệm khách quan ({do_kho}) từ văn bản: '{noi_dung}'. Yêu cầu: 4 đáp án A,B,C,D. Cuối mỗi câu có ĐÁP ÁN ĐÚNG và GIẢI THÍCH."
     xu_ly_ai(prompt)
