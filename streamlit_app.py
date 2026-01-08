@@ -8,7 +8,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import PyPDF2
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="Hệ Thống Ra Đề - 1 Key", page_icon="🏫", layout="wide")
+st.set_page_config(page_title="Phần mềm soạn đề tự động 2.0", page_icon="🏫", layout="wide")
 
 # --- CẤU HÌNH API KEY ---
 # Chỉ sử dụng 1 Key duy nhất theo yêu cầu
