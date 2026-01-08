@@ -9,7 +9,7 @@ import PyPDF2
 import random
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="Phần mềm Soạn đề (Fix Lỗi 404)", page_icon="🛠️", layout="wide")
+st.set_page_config(page_title="Phần mềm Soạn đề 2.0", page_icon="🛠️", layout="wide")
 
 # --- DANH SÁCH KEY CỦA BẠN ---
 API_KEYS = [
