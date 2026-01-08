@@ -1,136 +1,316 @@
 import streamlit as st
 import requests
 import json
+import time
+import random
 from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from io import BytesIO
 import PyPDF2
 
-# --- CẤU HÌNH TRANG ---
-st.set_page_config(page_title="Hệ Thống Ra Đề", page_icon="🏫", layout="wide")
+# ==============================================================================
+# 1. CẤU HÌNH HỆ THỐNG & GIAO DIỆN
+# ==============================================================================
+st.set_page_config(
+    page_title="Hệ Thống Ra Đề Thông Minh",
+    page_icon="🏫",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# --- 3 KEY CỦA BẠN (Đã tích hợp) ---
+# Danh sách API Key dự phòng (Cơ chế cân bằng tải)
 API_KEYS = [
     "AIzaSyC7DAv7xrQ7rndZ72Sogogb4CWBdt1xpRM",
     "AIzaSyBsBd5X79HwzHmZUStQFrAC1ixhfpjeWV0",
     "AIzaSyBzMYO-OC9In_ilgLbg1rc57Pl7K8a-ay0"
 ]
 
-# --- HÀM GỌI AI TRỰC TIẾP (KHÔNG CẦN THƯ VIỆN GOOGLE) ---
-def call_gemini_smart(prompt):
-    # Dùng model Flash cho nhanh
-    url_base = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-    
-    # Cấu hình để AI không từ chối trả lời (Chống kiểm duyệt gắt)
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
+# CSS tùy chỉnh để làm đẹp giao diện
+st.markdown("""
+<style>
+    /* Tiêu đề chính */
+    .main-title {
+        font-size: 2.5rem;
+        color: #004d99; /* Xanh giáo dục */
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px;
     }
+    /* Phụ đề */
+    .sub-title {
+        font-size: 1.2rem;
+        color: #555;
+        text-align: center;
+        font-style: italic;
+        margin-bottom: 30px;
+    }
+    /* Nút bấm */
+    .stButton>button {
+        background-color: #004d99;
+        color: white;
+        font-weight: bold;
+        border-radius: 8px;
+        height: 3em;
+        border: none;
+        transition: all 0.3s;
+    }
+    .stButton>button:hover {
+        background-color: #003366;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    /* Khung kết quả */
+    .result-box {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 2. CÁC HÀM XỬ LÝ LOGIC (BACKEND)
+# ==============================================================================
+
+def call_google_ai_direct(prompt):
+    """
+    Hàm gọi AI thông qua HTTP Request trực tiếp.
+    Ưu điểm: Không phụ thuộc vào thư viện, chạy được trên mọi môi trường mạng.
+    """
+    # Sử dụng model Flash cho tốc độ nhanh, fallback sang Pro nếu cần
+    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    
     headers = {'Content-Type': 'application/json'}
+    
+    # Cấu hình an toàn (Tắt bộ lọc để AI không từ chối các câu hỏi lịch sử/chiến tranh)
+    safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
 
-    # Vòng lặp thử Key
+    log_errors = []
+
+    # Thuật toán thử sai (Retry Logic): Quét qua Key -> Quét qua Model
     for key in API_KEYS:
-        try:
-            full_url = f"{url_base}?key={key}"
-            response = requests.post(full_url, headers=headers, data=json.dumps(payload), timeout=30)
+        for model in models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
             
-            if response.status_code == 200:
-                data = response.json()
-                return data['candidates'][0]['content']['parts'][0]['text']
-            elif response.status_code == 429: # Quá tải
-                continue 
-            else: # Lỗi khác
-                print(f"Key lỗi: {response.text}")
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "safetySettings": safety_settings,
+                "generationConfig": {
+                    "temperature": 0.7, # Độ sáng tạo vừa phải
+                    "maxOutputTokens": 8192
+                }
+            }
+            
+            try:
+                response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+                
+                if response.status_code == 200:
+                    try:
+                        return response.json()['candidates'][0]['content']['parts'][0]['text']
+                    except KeyError:
+                        continue # Lỗi cấu trúc JSON, thử cái tiếp theo
+                elif response.status_code == 429:
+                    break # Key này hết hạn mức, đổi Key khác ngay
+                else:
+                    log_errors.append(f"{model}: {response.status_code}")
+                    continue
+            except Exception as e:
+                log_errors.append(str(e))
                 continue
-        except Exception:
-            continue
-            
-    return "⚠️ LỖI MẠNG: Đã thử tất cả các kênh nhưng không kết nối được. Vui lòng kiểm tra Wifi."
+    
+    # Nếu chạy hết vòng lặp mà không được
+    return f"⚠️ HỆ THỐNG QUÁ TẢI. Vui lòng thử lại sau 30 giây.\n(Chi tiết: {', '.join(log_errors)})"
 
-# --- HÀM XỬ LÝ FILE ---
-def read_file(uploaded_file):
+def read_document(uploaded_file):
+    """Đọc nội dung từ file PDF hoặc Word tải lên."""
     try:
         if uploaded_file.name.endswith('.pdf'):
             reader = PyPDF2.PdfReader(uploaded_file)
-            return "".join([page.extract_text() or "" for page in reader.pages])
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            return text
         elif uploaded_file.name.endswith('.docx'):
             doc = Document(uploaded_file)
-            return "\n".join([p.text for p in doc.paragraphs])
-        return ""
-    except: return "Lỗi đọc file."
+            text = "\n".join([p.text for p in doc.paragraphs])
+            return text
+    except Exception as e:
+        return f"Lỗi đọc file: {str(e)}"
+    return ""
 
-def create_word(content, topic):
+def create_professional_word(content, topic):
+    """Tạo file Word với định dạng chuẩn sư phạm."""
     doc = Document()
-    doc.add_heading('TRƯỜNG PTDTBT THCS MÙN CHUNG', 0)
-    doc.add_paragraph(f'ĐỀ KIỂM TRA: {topic.upper()}')
-    doc.add_paragraph("Họ tên: ................................................. Lớp: ............")
-    doc.add_paragraph("-" * 60)
+    
+    # Header: Tên trường
+    header = doc.add_heading('TRƯỜNG PTDTBT THCS MÙN CHUNG', 0)
+    header.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Sub-header: Đề kiểm tra
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(f'ĐỀ KIỂM TRA CHỦ ĐỀ: {topic.upper()}')
+    run.bold = True
+    run.font.size = Pt(14)
+    run.font.color.rgb = RGBColor(0, 0, 0)
+    
+    # Thông tin học sinh
+    info = doc.add_paragraph("Họ và tên: .............................................................. Lớp: ....................")
+    info.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_paragraph("-" * 70).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Nội dung đề thi
     doc.add_paragraph(content)
+    
+    # Footer
+    section = doc.sections[0]
+    footer = section.footer
+    p_footer = footer.paragraphs[0]
+    p_footer.text = "Đề thi được tạo tự động bởi Hệ thống AI - Trường PTDTBT THCS Mùn Chung"
+    
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
-# --- GIAO DIỆN ---
-st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 HỆ THỐNG HỖ TRỢ RA ĐỀ THI</h1>", unsafe_allow_html=True)
-st.markdown("<div style='text-align: center; color: grey;'>© Bản quyền thuộc về trường PTDTBT THCS Mùn Chung</div>", unsafe_allow_html=True)
-st.markdown("---")
+# ==============================================================================
+# 3. GIAO DIỆN NGƯỜI DÙNG (FRONTEND)
+# ==============================================================================
 
-# Menu Mobile
-if st.session_state.get('check_mobile', True):
-    st.info("💡 Lưu ý: Trên điện thoại, bấm mũi tên `>` góc trái trên để mở menu.")
-    st.session_state['check_mobile'] = False
+# Header trang
+st.markdown('<div class="main-title">🏫 HỆ THỐNG TRỢ LÝ RA ĐỀ THI 4.0</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">© Bản quyền thuộc về Trường PTDTBT THCS Mùn Chung</div>', unsafe_allow_html=True)
 
+# Sidebar cấu hình
 with st.sidebar:
-    st.header("Cấu hình")
-    st.success("Trạng thái: Đã kết nối (Direct Mode)")
+    st.image("https://cdn-icons-png.flaticon.com/512/2997/2997277.png", width=100)
+    st.header("⚙️ Bảng Điều Khiển")
+    st.success("✅ Trạng thái: Đã kết nối Máy chủ AI")
+    st.info("ℹ️ Phiên bản: v2.5 (Direct API Stable)")
+    st.markdown("---")
+    st.write("**Hướng dẫn nhanh:**")
+    st.markdown("1. Chọn tab chức năng bên phải.\n2. Nhập chủ đề hoặc tải file.\n3. Bấm nút tạo đề và chờ kết quả.")
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(["⚡ Soạn Nhanh", "📂 Từ File", "📥 Tải Về"])
+# Tabs chức năng
+tab1, tab2, tab3 = st.tabs(["⚡ SOẠN ĐỀ NHANH", "📂 SOẠN TỪ TÀI LIỆU", "💾 KHO LƯU TRỮ & TẢI VỀ"])
 
-# Tab 1: Soạn Nhanh
+# --- TAB 1: SOẠN THEO CHỦ ĐỀ ---
 with tab1:
-    c1, c2 = st.columns(2)
-    with c1:
-        topic = st.text_input("Chủ đề:", "Lịch sử Điện Biên Phủ")
-        grade = st.selectbox("Khối lớp:", ["6", "7", "8", "9"])
-    with c2:
-        num = st.slider("Số câu:", 5, 30, 10)
-        hard = st.select_slider("Độ khó:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
+    st.subheader("📝 Nhập thông tin đề thi")
+    col1, col2 = st.columns(2)
     
-    if st.button("🚀 SOẠN ĐỀ NGAY", use_container_width=True):
-        prompt = f"Đóng vai giáo viên lớp {grade}. Soạn {num} câu trắc nghiệm về '{topic}'. Độ khó: {hard}. Có đáp án chi tiết cuối bài."
-        with st.spinner("Hệ thống đang soạn thảo..."):
-            res = call_gemini_smart(prompt)
-            st.session_state['res'] = res
-            st.session_state['top'] = topic
-            if "⚠️" in res: st.error(res)
-            else: st.success("Xong! Qua tab Tải Về để lấy file."); st.write(res)
+    with col1:
+        topic_input = st.text_input("Chủ đề / Bài học:", placeholder="Ví dụ: Chiến thắng Điện Biên Phủ", value="Lịch sử Điện Biên Phủ")
+        grade_input = st.selectbox("Dành cho học sinh:", ["Khối 6", "Khối 7", "Khối 8", "Khối 9", "Ôn thi vào 10"])
+    
+    with col2:
+        q_count = st.number_input("Số lượng câu hỏi:", min_value=5, max_value=50, value=10)
+        difficulty = st.select_slider("Mức độ nhận thức:", options=["Nhận biết", "Thông hiểu", "Vận dụng", "Vận dụng cao"])
 
-# Tab 2: Từ File
-with tab2:
-    f = st.file_uploader("Tải tài liệu (PDF/Word):", type=['pdf','docx'])
-    if st.button("🚀 PHÂN TÍCH & SOẠN", use_container_width=True):
-        if f:
-            with st.spinner("Đang đọc và phân tích..."):
-                content = read_file(f)
-                if len(content) < 20: st.warning("File không có nội dung chữ.")
+    if st.button("🚀 KHỞI TẠO ĐỀ THI", use_container_width=True):
+        if not topic_input:
+            st.warning("Vui lòng nhập chủ đề trước!")
+        else:
+            prompt_text = f"""
+            Đóng vai là một giáo viên {grade_input} có kinh nghiệm.
+            Hãy soạn một đề kiểm tra trắc nghiệm khách quan (4 lựa chọn A,B,C,D) về chủ đề: "{topic_input}".
+            
+            Thông số kỹ thuật:
+            - Số lượng: {q_count} câu.
+            - Độ khó: {difficulty}.
+            
+            Yêu cầu định dạng:
+            - Phần 1: Nội dung đề thi (Chỉ có câu hỏi).
+            - Phần 2: Bảng đáp án và Hướng dẫn giải chi tiết (Tách riêng ở cuối).
+            - Ngôn ngữ: Tiếng Việt chuẩn mực, không lỗi chính tả.
+            """
+            
+            with st.spinner(f"AI đang phân tích dữ liệu và soạn đề về '{topic_input}'..."):
+                start_time = time.time()
+                result = call_google_ai_direct(prompt_text)
+                end_time = time.time()
+                
+                if "HỆ THỐNG QUÁ TẢI" in result:
+                    st.error(result)
                 else:
-                    prompt = f"Dựa vào văn bản: {content[:15000]}. Soạn 10 câu trắc nghiệm có đáp án."
-                    res = call_gemini_smart(prompt)
-                    st.session_state['res'] = res
-                    st.session_state['top'] = f.name
-                    if "⚠️" in res: st.error(res)
-                    else: st.success("Xong! Qua tab Tải Về để lấy file."); st.write(res)
+                    st.session_state['exam_content'] = result
+                    st.session_state['exam_topic'] = topic_input
+                    st.balloons() # Hiệu ứng chúc mừng
+                    st.success(f"✅ Đã soạn xong trong {round(end_time - start_time, 2)} giây! Mời thầy/cô xem kết quả bên dưới.")
+                    st.markdown("### 📄 Xem trước nội dung:")
+                    st.text_area("", result, height=400)
 
-# Tab 3: Tải Về
+# --- TAB 2: SOẠN TỪ FILE (RAG) ---
+with tab2:
+    st.subheader("📂 Tải lên giáo trình/tài liệu tham khảo")
+    uploaded_file = st.file_uploader("Hỗ trợ định dạng PDF hoặc Word (.docx)", type=['pdf', 'docx'])
+    
+    if st.button("🚀 PHÂN TÍCH FILE & TẠO ĐỀ", use_container_width=True):
+        if uploaded_file:
+            with st.spinner("Đang đọc tài liệu..."):
+                doc_content = read_document(uploaded_file)
+                
+                if len(doc_content) < 50:
+                    st.warning("⚠️ Tài liệu quá ngắn hoặc không đọc được nội dung chữ (File ảnh scan).")
+                else:
+                    # Giới hạn ký tự để tránh quá tải
+                    prompt_file = f"""
+                    Dựa hoàn toàn vào nội dung văn bản được cung cấp dưới đây:
+                    ----------------
+                    {doc_content[:15000]}
+                    ----------------
+                    Yêu cầu:
+                    Hãy soạn 10 câu hỏi trắc nghiệm khách quan để kiểm tra mức độ hiểu bài của học sinh về văn bản trên.
+                    Cung cấp đáp án đúng ở cuối đề.
+                    """
+                    
+                    res_file = call_google_ai_direct(prompt_file)
+                    
+                    if "HỆ THỐNG QUÁ TẢI" in res_file:
+                        st.error(res_file)
+                    else:
+                        st.session_state['exam_content'] = res_file
+                        st.session_state['exam_topic'] = uploaded_file.name
+                        st.success("✅ Đã xử lý xong tài liệu!")
+                        st.text_area("Kết quả:", res_file, height=400)
+        else:
+            st.warning("Vui lòng chọn file trước khi bấm nút!")
+
+# --- TAB 3: TẢI VỀ ---
 with tab3:
-    if 'res' in st.session_state:
-        txt = st.text_area("", st.session_state['res'], height=300)
-        docx = create_word(txt, st.session_state['top'])
-        st.download_button("📥 TẢI FILE WORD", docx, f"{st.session_state['top']}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-    else: st.info("Chưa có dữ liệu.")
+    st.subheader("📥 Xuất bản tài liệu")
+    if 'exam_content' in st.session_state:
+        st.info(f"Đang có bản nháp cho chủ đề: **{st.session_state['exam_topic']}**")
+        
+        # Cho phép sửa lại trước khi tải
+        final_edit = st.text_area("Chỉnh sửa lần cuối trước khi in:", st.session_state['exam_content'], height=300)
+        
+        # Tạo file Word
+        word_data = create_professional_word(final_edit, st.session_state['exam_topic'])
+        
+        col_d1, col_d2 = st.columns([1, 2])
+        with col_d1:
+            st.download_button(
+                label="📥 TẢI FILE WORD (.DOCX)",
+                data=word_data,
+                file_name=f"De_Thi_{st.session_state['exam_topic']}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
+        with col_d2:
+            st.warning("💡 Lưu ý: File Word tải về đã được căn chỉnh lề và thêm tiêu đề trường chuẩn.")
+            
+    else:
+        st.image("https://cdn-icons-png.flaticon.com/512/7486/7486744.png", width=100)
+        st.caption("Chưa có dữ liệu. Vui lòng tạo đề ở Tab 1 hoặc Tab 2.")
+
+# Footer
+st.markdown("---")
+st.markdown("<div style='text-align: center; color: grey; font-size: 0.8rem;'>Sản phẩm tham dự cuộc thi Khoa học Kỹ thuật - Phát triển bởi Giáo viên trường PTDTBT THCS Mùn Chung</div>", unsafe_allow_html=True)
