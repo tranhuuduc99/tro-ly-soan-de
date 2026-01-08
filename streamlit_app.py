@@ -39,7 +39,7 @@ if api_key:
     try:
         genai.configure(api_key=api_key)
         # Sử dụng model Flash cho tốc độ nhanh nhất
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-pro')
     except:
         st.error("❌ Lỗi API Key! Vui lòng kiểm tra lại.")
         st.stop()
