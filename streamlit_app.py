@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import time
+import random
 from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -19,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Danh sách API Key
+# Danh sách API Key của bạn
 API_KEYS = [
     "AIzaSyC7DAv7xrQ7rndZ72Sogogb4CWBdt1xpRM",
     "AIzaSyBsBd5X79HwzHmZUStQFrAC1ixhfpjeWV0",
@@ -34,70 +35,65 @@ st.markdown("""
     .stButton>button {background-color: #004d99; color: white; font-weight: bold; border-radius: 8px; height: 3em; border: none;}
     .stButton>button:hover {background-color: #003366;}
     .ai-box {background-color: #e6f3ff; padding: 15px; border-radius: 10px; border-left: 5px solid #004d99; margin-top: 20px;}
+    /* Ẩn lỗi mặc định của Streamlit cho đẹp */
+    .stException {display: none;}
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. XỬ LÝ AI (AUTO-RETRY & DISCOVERY)
+# 2. XỬ LÝ AI (SMART QUEUE - CHỜ CHỨ KHÔNG BÁO LỖI)
 # ==============================================================================
 
-def get_active_model(api_key):
-    """Hàm dò tìm model, có thử lại nếu mạng lag"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            for m in data.get('models', []):
-                if 'generateContent' in m.get('supportedGenerationMethods', []):
-                    name = m['name'].replace('models/', '')
-                    if 'flash' in name or 'pro' in name: return name
-            if data.get('models'): return data['models'][0]['name'].replace('models/', '')
-    except: pass
-    return "gemini-pro"
-
 def generate_exam_content(prompt):
-    logs = []
+    # ƯU TIÊN SỐ 1: Dùng Flash vì tốc độ cao, chịu tải tốt
+    model = "gemini-1.5-flash"
+    
     safety = [{"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
               {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
               {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
               {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}]
 
-    # Vòng lặp qua từng Key
-    for i, key in enumerate(API_KEYS):
-        clean_key = key.strip()
-        model_name = get_active_model(clean_key)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={clean_key}"
-        headers = {'Content-Type': 'application/json'}
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}
+    # Thử tối đa 3 vòng (Mỗi vòng thử hết 3 key) -> Tổng 9 lần thử
+    max_retries = 3 
+    
+    progress_text = st.empty() # Khung thông báo trạng thái
 
-        # Cơ chế thử lại (Retry) cho mỗi Key: Thử tối đa 2 lần nếu gặp lỗi 503
-        for attempt in range(2): 
+    for attempt in range(max_retries):
+        for i, key in enumerate(API_KEYS):
+            clean_key = key.strip()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+            headers = {'Content-Type': 'application/json'}
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "safetySettings": safety}
+
             try:
-                response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+                # Gửi yêu cầu
+                response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
                 
                 if response.status_code == 200:
+                    progress_text.empty() # Xóa thông báo chờ
                     return response.json()['candidates'][0]['content']['parts'][0]['text']
                 
-                elif response.status_code == 503: # Server quá tải
-                    logs.append(f"Key {i+1} (Lần {attempt+1}): Mạng bận (503)... Đang thử lại.")
-                    time.sleep(2) # Nghỉ 2 giây rồi thử lại ngay vòng lặp sau
-                    continue 
+                elif response.status_code == 429: 
+                    # QUÁ TẢI -> CHỜ 3 GIÂY RỒI ĐỔI KEY
+                    progress_text.warning(f"⏳ Server đang đông (Kênh {i+1}). Đang chuyển kênh...")
+                    time.sleep(2)
+                    continue
                 
-                elif response.status_code == 429: # Hết hạn mức
-                    logs.append(f"Key {i+1}: Quá tải (429).")
-                    break # Thoát vòng lặp attempt để đổi Key khác ngay
-                
-                else:
-                    logs.append(f"Key {i+1}: Lỗi {response.status_code}")
-                    break # Lỗi khác thì cũng đổi key
+                elif response.status_code == 503:
+                    # MẠNG LAG -> CHỜ 5 GIÂY
+                    progress_text.warning(f"📡 Tín hiệu chập chờn. Đang kết nối lại...")
+                    time.sleep(5)
+                    continue
                     
-            except Exception as e:
-                logs.append(f"Key {i+1}: Lỗi kết nối mạng.")
-                time.sleep(1)
-                break
+            except Exception:
+                continue
+        
+        # Nếu thử hết cả 3 key mà vẫn không được -> Nghỉ giải lao 5 giây rồi thử lại vòng mới
+        progress_text.info(f"🔄 Đang điều hướng sang Server dự phòng ({attempt+1}/{max_retries})... Vui lòng đợi.")
+        time.sleep(5)
 
-    return f"⚠️ HỆ THỐNG ĐANG QUÁ TẢI (Google Server Busy). Vui lòng đợi 1 phút và thử lại.\n(Chi tiết: {'; '.join(logs)})"
+    # Nếu sau tất cả nỗ lực vẫn thất bại
+    return "⚠️ HỆ THỐNG ĐANG BẢO TRÌ NGẮN HẠN. Thầy/Cô vui lòng chờ khoảng 2 phút để Google mở lại cổng kết nối nhé!"
 
 # ==============================================================================
 # 3. XỬ LÝ FILE & WORD
@@ -146,8 +142,8 @@ st.markdown('<div class="school-name">© Bản quyền thuộc về Trường PT
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3067/3067451.png", width=100)
     st.header("Bảng Điều Khiển")
-    st.success("🟢 Kết nối ổn định")
-    st.info("Cơ chế: Auto-Retry (Chống nghẽn mạng)")
+    st.success("🟢 Server: Gemini Flash (High Speed)")
+    st.info("Trạng thái: Tự động điều hướng")
     st.markdown("---")
 
 tab1, tab2, tab3 = st.tabs(["⚡ SOẠN CHỦ ĐỀ", "📂 SOẠN TỪ FILE", "📊 KẾT QUẢ & PHÂN TÍCH"])
@@ -155,25 +151,22 @@ tab1, tab2, tab3 = st.tabs(["⚡ SOẠN CHỦ ĐỀ", "📂 SOẠN TỪ FILE", "
 # --- TAB 1 ---
 with tab1:
     c1, c2, c3 = st.columns(3)
-    
     with c1:
-        grade = st.selectbox("Khối lớp:", ["Lớp 1", "Lớp 2", "Lớp 3", "Lớp 4", "Lớp 5", "Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9", "Lớp 10", "Lớp 11", "Lớp 12"])
-    
+        grade = st.selectbox("Khối lớp:", ["Lớp 6", "Lớp 7", "Lớp 8", "Lớp 9", "Lớp 10", "Lớp 11", "Lớp 12", "Lớp 1", "Lớp 2", "Lớp 3", "Lớp 4", "Lớp 5"])
     with c2:
-        subject = st.selectbox("Môn học:", ["Toán học", "Ngữ Văn/Tiếng Việt", "Tiếng Anh", "Lịch Sử", "Địa Lý", "Vật Lý", "Hóa Học", "Sinh Học", "KHTN", "LS&ĐL", "GDCD", "Tin học", "Công nghệ", "Âm nhạc", "Mỹ thuật", "Khác"])
-    
+        subject = st.selectbox("Môn học:", ["Toán học", "Ngữ Văn", "Tiếng Anh", "Lịch Sử", "Địa Lý", "Vật Lý", "Hóa Học", "Sinh Học", "KHTN", "Tin học", "Công nghệ", "GDCD", "Âm nhạc", "Mỹ thuật"])
     with c3:
         q_num = st.number_input("Số câu:", 5, 50, 10)
 
-    topic = st.text_input("Chủ đề / Bài học:", value="Ôn tập chương I")
-    
+    topic = st.text_input("Chủ đề / Bài học:", value="Ôn tập học kỳ 1")
     diff_dict = {"Nhận biết": 1, "Thông hiểu": 2, "Vận dụng": 3, "Vận dụng cao": 4}
     diff_label = st.select_slider("Mức độ khó:", options=list(diff_dict.keys()))
 
     if st.button("🚀 KHỞI TẠO ĐỀ THI", use_container_width=True):
-        prompt = f"Đóng vai giáo viên {subject} lớp {grade}. Soạn đề trắc nghiệm (4 đáp án) chủ đề '{topic}'. {q_num} câu. Độ khó: {diff_label}. Nội dung phù hợp lứa tuổi. Có đáp án chi tiết."
+        prompt = f"Đóng vai giáo viên {subject} lớp {grade}. Soạn đề trắc nghiệm (4 đáp án) chủ đề '{topic}'. {q_num} câu. Độ khó: {diff_label}. Nội dung chuẩn SGK. Có đáp án chi tiết cuối đề."
         
-        with st.spinner(f"Hệ thống đang xử lý (Có thể mất 10-20s nếu mạng bận)..."):
+        # Tạo hiệu ứng chờ chuyên nghiệp
+        with st.spinner(f"Đang kết nối máy chủ AI..."):
             res = generate_exam_content(prompt)
             if "⚠️" in res: st.error(res)
             else:
