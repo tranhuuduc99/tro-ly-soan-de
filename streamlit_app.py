@@ -8,7 +8,7 @@ st.set_page_config(page_title="Trợ lý Sư phạm 4.0", page_icon="🎓", layo
 # --- 2. GIAO DIỆN HEADER ---
 st.title("🎓 HỆ THỐNG TRỢ LÝ ẢO SƯ PHẠM 4.0")
 st.markdown("**Đơn vị:** Trường PTDTBT THCS Mùn Chung | **Tác giả:** Nhóm thầy Trần Hữu Đức")
-st.caption("Phiên bản: Kết nối trực tiếp (Direct API)")
+st.caption("Phiên bản: Key tích hợp sẵn - Kết nối trực tiếp")
 st.markdown("---")
 
 # --- 3. THANH CÔNG CỤ BÊN TRÁI ---
@@ -16,13 +16,21 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=100)
     st.header("⚙️ CẤU HÌNH")
     
-    # Lấy API Key
-    api_key = None
-    if "GOOGLE_API_KEY" in st.secrets:
-        api_key = st.secrets["GOOGLE_API_KEY"]
-        st.success("✅ Đã kết nối Key hệ thống")
-    else:
-        api_key = st.text_input("Nhập API Key:", type="password")
+    # === CẬP NHẬT KEY MỚI TẠI ĐÂY ===
+    # Tôi đã điền sẵn Key của thầy vào đây luôn cho tiện
+    api_key = "AIzaSyB2CmDwKWc4hXAxF4LGjOFiLKVLg6QbH4U"
+    
+    st.success(f"✅ Đã tích hợp Key: ...{api_key[-6:]}")
+    
+    st.divider()
+
+    # Menu chọn Model (Dự phòng khi Google đổi tên)
+    chon_model = st.selectbox(
+        "🤖 CHỌN PHIÊN BẢN AI:",
+        ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"],
+        index=0,
+        help="Nếu báo lỗi 404, hãy đổi sang model khác trong danh sách này."
+    )
     
     st.divider()
     
@@ -34,10 +42,10 @@ with st.sidebar:
          "4. Hỗ trợ Giáo dục hòa nhập"]
     )
 
-# --- 4. HÀM KẾT NỐI TRỰC TIẾP (KHÔNG QUA THƯ VIỆN LỖI) ---
-def call_gemini_direct(api_key, prompt):
-    # Dùng URL trực tiếp của Google (Bypass lỗi thư viện)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+# --- 4. HÀM KẾT NỐI TRỰC TIẾP (DIRECT API CALL) ---
+def call_google_api(key, model_name, prompt):
+    # Đường dẫn API trực tiếp
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
     
     headers = {'Content-Type': 'application/json'}
     data = {
@@ -49,31 +57,36 @@ def call_gemini_direct(api_key, prompt):
     try:
         response = requests.post(url, headers=headers, json=data)
         
+        # Xử lý các mã lỗi phổ biến
         if response.status_code == 200:
             result = response.json()
-            # Lọc lấy phần văn bản trả về
-            return result['candidates'][0]['content']['parts'][0]['text']
+            try:
+                return result['candidates'][0]['content']['parts'][0]['text']
+            except:
+                return "⚠️ AI trả lời rỗng (Vui lòng thử lại)."
+        elif response.status_code == 404:
+            return f"⚠️ Lỗi 404: Model '{model_name}' không khả dụng. 👉 Thầy hãy chọn model khác ở cột bên trái!"
+        elif response.status_code == 429:
+            return "⚠️ Lỗi 429: Key này đã hết lượt dùng miễn phí. Vui lòng đổi Key khác."
+        elif response.status_code == 400:
+            return f"⚠️ Lỗi 400: Yêu cầu không hợp lệ. ({response.text})"
         else:
-            return f"⚠️ Lỗi từ Google (Mã {response.status_code}): {response.text}"
+            return f"⚠️ Lỗi Google (Mã {response.status_code}): {response.text}"
             
     except Exception as e:
         return f"⚠️ Lỗi kết nối mạng: {e}"
 
 # --- 5. XỬ LÝ CHỨC NĂNG ---
-if not api_key:
-    st.warning("👈 Vui lòng nhập API Key để bắt đầu!")
-    st.stop()
 
 def xu_ly_ai(prompt_text, button_text="🚀 THỰC HIỆN"):
     if st.button(button_text, type="primary"):
         if noi_dung or tu_khoa:
-            with st.spinner("AI đang xử lý..."):
-                ket_qua = call_gemini_direct(api_key, prompt_text)
+            with st.spinner(f"Đang gửi lệnh tới {chon_model}..."):
+                # Gọi hàm xử lý
+                ket_qua = call_google_api(api_key, chon_model, prompt_text)
                 
-                if "⚠️ Lỗi" in ket_qua:
+                if "⚠️" in ket_qua:
                     st.error(ket_qua)
-                    if "429" in ket_qua:
-                        st.error("Gợi ý: Key này đã hết hạn mức. Thầy hãy thay Key khác vào phần Secrets.")
                 else:
                     st.success("✅ Đã xong! Kết quả bên dưới:")
                     st.markdown(ket_qua)
