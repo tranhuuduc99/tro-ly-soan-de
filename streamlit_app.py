@@ -113,7 +113,7 @@ def create_word(content, topic, grade_info):
     return buffer
 
 # --- 5. GIAO DIỆN CHÍNH ---
-st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 HỆ THỐNG RA ĐỀ THI (1 KEY)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 Phần mềm soạn đề tự động 2.0</h1>", unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
