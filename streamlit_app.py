@@ -1,6 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
-import time
+import requests
+import json
 
 # --- 1. CẤU HÌNH TRANG WEB ---
 st.set_page_config(page_title="Trợ lý Sư phạm 4.0", page_icon="🎓", layout="wide")
@@ -8,6 +8,7 @@ st.set_page_config(page_title="Trợ lý Sư phạm 4.0", page_icon="🎓", layo
 # --- 2. GIAO DIỆN HEADER ---
 st.title("🎓 HỆ THỐNG TRỢ LÝ ẢO SƯ PHẠM 4.0")
 st.markdown("**Đơn vị:** Trường PTDTBT THCS Mùn Chung | **Tác giả:** Nhóm thầy Trần Hữu Đức")
+st.caption("Phiên bản: Kết nối trực tiếp (Direct API)")
 st.markdown("---")
 
 # --- 3. THANH CÔNG CỤ BÊN TRÁI ---
@@ -33,33 +34,30 @@ with st.sidebar:
          "4. Hỗ trợ Giáo dục hòa nhập"]
     )
 
-# --- 4. HÀM KẾT NỐI AI (CƠ CHẾ 'THỬ ĐẾN KHI ĐƯỢC') ---
-def get_ai_response(prompt):
-    genai.configure(api_key=api_key)
+# --- 4. HÀM KẾT NỐI TRỰC TIẾP (KHÔNG QUA THƯ VIỆN LỖI) ---
+def call_gemini_direct(api_key, prompt):
+    # Dùng URL trực tiếp của Google (Bypass lỗi thư viện)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
-    # Danh sách các Model sẽ thử lần lượt
-    cac_model_thu = [
-        'gemini-1.5-flash',       # Ưu tiên 1: Nhanh, miễn phí nhiều
-        'gemini-1.5-flash-latest',# Ưu tiên 2: Bản mới nhất của Flash
-        'gemini-1.0-pro',         # Ưu tiên 3: Bản ổn định cũ
-        'gemini-pro'              # Ưu tiên 4: Bản gốc
-    ]
+    headers = {'Content-Type': 'application/json'}
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
     
-    loi_cuoi_cung = ""
-    
-    for ten_model in cac_model_thu:
-        try:
-            # Thử kết nối model này
-            model = genai.GenerativeModel(ten_model)
-            response = model.generate_content(prompt)
-            return response.text # Nếu thành công thì trả về kết quả ngay
-        except Exception as e:
-            # Nếu lỗi thì bỏ qua, thử cái tiếp theo trong danh sách
-            loi_cuoi_cung = e
-            continue
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            result = response.json()
+            # Lọc lấy phần văn bản trả về
+            return result['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"⚠️ Lỗi từ Google (Mã {response.status_code}): {response.text}"
             
-    # Nếu thử hết danh sách mà vẫn lỗi
-    return f"⚠️ Lỗi kết nối (Đã thử mọi cách): {loi_cuoi_cung}"
+    except Exception as e:
+        return f"⚠️ Lỗi kết nối mạng: {e}"
 
 # --- 5. XỬ LÝ CHỨC NĂNG ---
 if not api_key:
@@ -70,10 +68,12 @@ def xu_ly_ai(prompt_text, button_text="🚀 THỰC HIỆN"):
     if st.button(button_text, type="primary"):
         if noi_dung or tu_khoa:
             with st.spinner("AI đang xử lý..."):
-                ket_qua = get_ai_response(prompt_text)
+                ket_qua = call_gemini_direct(api_key, prompt_text)
+                
                 if "⚠️ Lỗi" in ket_qua:
                     st.error(ket_qua)
-                    st.caption("Gợi ý: Thầy hãy vào phần Manage App -> Reboot App để cập nhật lại hệ thống.")
+                    if "429" in ket_qua:
+                        st.error("Gợi ý: Key này đã hết hạn mức. Thầy hãy thay Key khác vào phần Secrets.")
                 else:
                     st.success("✅ Đã xong! Kết quả bên dưới:")
                     st.markdown(ket_qua)
@@ -98,7 +98,6 @@ if "1." in menu:
 # === CHỨC NĂNG 2: ĐÚNG/SAI ===
 elif "2." in menu:
     st.header("✅ 2. SOẠN CÂU HỎI ĐÚNG/SAI")
-    st.caption("Chuẩn GDPT 2018: Mỗi câu lớn có 4 ý nhỏ a/b/c/d")
     noi_dung = st.text_area("Dán bài học:", height=150)
     sl = st.number_input("Số câu lớn:", value=2, min_value=1)
     tu_khoa = "dummy"
