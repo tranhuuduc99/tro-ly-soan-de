@@ -18,17 +18,13 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=100)
     st.header("⚙️ CẤU HÌNH")
     
-    # --- XỬ LÝ API KEY TỰ ĐỘNG ---
+    # --- XỬ LÝ API KEY TỰ ĐỘNG (ƯU TIÊN LẤY TRONG SECRETS) ---
     api_key = None
-    
-    # Kiểm tra xem có Key trong "két sắt" (Secrets) không
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
-        st.success("✅ Đã tự động kết nối (Key từ hệ thống)")
+        st.success("✅ Đã kết nối Key hệ thống")
     else:
-        # Nếu không có trong két thì mới hiện ô nhập
         api_key = st.text_input("Nhập API Key Google:", type="password")
-        st.caption("Mẹo: Cấu hình Secrets để không phải nhập lại lần sau.")
     
     st.divider()
     
@@ -43,49 +39,17 @@ with st.sidebar:
     
     st.info("💡 Hướng dẫn: \n1. Chọn chức năng.\n2. Nhập nội dung bài học.\n3. Bấm nút để AI làm việc.")
 
-# --- 4. HÀM TỰ ĐỘNG KẾT NỐI (AUTO-DETECT) ---
-def get_gemini_model(api_key):
+# --- 4. KẾT NỐI AI (CHỈ DÙNG BẢN FLASH - KHÔNG TỰ ĐỘNG NỮA) ---
+model = None
+if api_key:
     try:
         genai.configure(api_key=api_key)
-        list_models = genai.list_models()
-        chon_model = None
-        
-        # Ưu tiên tìm Flash hoặc Pro
-        for m in list_models:
-            if 'generateContent' in m.supported_generation_methods:
-                name = m.name.replace('models/', '')
-                if 'gemini-1.5-flash' in name:
-                    chon_model = name
-                    break
-                elif 'gemini-pro' in name:
-                    chon_model = name
-        
-        if not chon_model:
-             for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    chon_model = m.name.replace('models/', '')
-                    break
-        
-        if chon_model:
-            return genai.GenerativeModel(chon_model), chon_model
-        else:
-            return None, None
-    except:
-        return None, None
-
-# --- XỬ LÝ KẾT NỐI ---
-model = None
-ten_model = ""
-
-if api_key:
-    model, ten_model = get_gemini_model(api_key)
-    if model:
-        # st.sidebar.success(f"Model: {ten_model}") # Tắt dòng này cho gọn
-        pass
-    else:
-        st.sidebar.error("❌ Key lỗi hoặc không tìm thấy Model!")
+        # ÉP CỨNG DÙNG BẢN FLASH (Bản này quota cao nhất, khó bị lỗi)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        st.sidebar.error(f"Lỗi kết nối: {e}")
 else:
-    st.warning("👈 Thầy/Cô vui lòng nhập API Key để bắt đầu!")
+    st.warning("👈 Vui lòng cấu hình API Key để sử dụng!")
     st.stop()
 
 # --- 5. XỬ LÝ CÁC CHỨC NĂNG ---
@@ -103,7 +67,7 @@ if "1." in menu:
     
     if st.button("🚀 SOẠN ĐỀ NGAY", type="primary"):
         if noi_dung:
-            with st.spinner("AI đang soạn đề..."):
+            with st.spinner("Đang soạn đề..."):
                 try:
                     prompt = f"Đóng vai GV môn {mon_hoc}. Soạn {so_cau} câu trắc nghiệm (Mức độ {do_kho}) từ: '{noi_dung}'. Yêu cầu: 4 đáp án A,B,C,D, có đáp án đúng và giải thích."
                     response = model.generate_content(prompt)
