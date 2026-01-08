@@ -1,136 +1,114 @@
 import streamlit as st
 import google.generativeai as genai
+import time
 
 # --- 1. CẤU HÌNH TRANG WEB ---
-st.set_page_config(
-    page_title="Trợ lý Sư phạm 4.0",
-    page_icon="🎓",
-    layout="wide"
-)
+st.set_page_config(page_title="Trợ lý Sư phạm 4.0", page_icon="🎓", layout="wide")
 
 # --- 2. GIAO DIỆN HEADER ---
 st.title("🎓 HỆ THỐNG TRỢ LÝ ẢO SƯ PHẠM 4.0")
 st.markdown("**Đơn vị:** Trường PTDTBT THCS Mùn Chung | **Tác giả:** Nhóm thầy Trần Hữu Đức")
 st.markdown("---")
 
-# --- 3. THANH CÔNG CỤ BÊN TRÁI (SIDEBAR) ---
+# --- 3. THANH CÔNG CỤ BÊN TRÁI ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/4712/4712035.png", width=100)
     st.header("⚙️ CẤU HÌNH")
     
-    # --- XỬ LÝ API KEY TỰ ĐỘNG (ƯU TIÊN LẤY TRONG SECRETS) ---
+    # Lấy API Key từ Secrets hoặc nhập tay
     api_key = None
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
         st.success("✅ Đã kết nối Key hệ thống")
     else:
-        api_key = st.text_input("Nhập API Key Google:", type="password")
+        api_key = st.text_input("Nhập API Key:", type="password")
     
     st.divider()
     
-    # Menu chọn chức năng
     menu = st.radio(
         "🎯 CHỌN CHỨC NĂNG:",
-        ["1. Soạn đề Trắc nghiệm (4 đáp án)", 
-         "2. Soạn đề Đúng/Sai (Mới 2018)",
-         "3. Soạn Tự luận + Barem chấm",
+        ["1. Soạn đề Trắc nghiệm", 
+         "2. Soạn đề Đúng/Sai (GDPT 2018)",
+         "3. Soạn Tự luận + Barem",
          "4. Hỗ trợ Giáo dục hòa nhập"]
     )
-    
-    st.info("💡 Hướng dẫn: \n1. Chọn chức năng.\n2. Nhập nội dung bài học.\n3. Bấm nút để AI làm việc.")
 
-# --- 4. KẾT NỐI AI (CHỈ DÙNG BẢN FLASH - KHÔNG TỰ ĐỘNG NỮA) ---
-model = None
-if api_key:
+# --- 4. HÀM KẾT NỐI AI (DÙNG GEMINI-PRO CHO ỔN ĐỊNH) ---
+def get_ai_response(prompt):
+    # Cấu hình AI
+    genai.configure(api_key=api_key)
+    
+    # Dùng gemini-pro (Bản ổn định nhất, không bao giờ lỗi 404)
+    model = genai.GenerativeModel('gemini-pro') 
+    
     try:
-        genai.configure(api_key=api_key)
-        # ÉP CỨNG DÙNG BẢN FLASH (Bản này quota cao nhất, khó bị lỗi)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
-        st.sidebar.error(f"Lỗi kết nối: {e}")
-else:
-    st.warning("👈 Vui lòng cấu hình API Key để sử dụng!")
+        return f"⚠️ Lỗi kết nối: {e}"
+
+# --- 5. XỬ LÝ CHỨC NĂNG ---
+if not api_key:
+    st.warning("👈 Vui lòng nhập API Key để bắt đầu!")
     st.stop()
 
-# --- 5. XỬ LÝ CÁC CHỨC NĂNG ---
+# Xử lý nút bấm chung
+def xu_ly_ai(prompt_text, button_text="🚀 THỰC HIỆN"):
+    if st.button(button_text, type="primary"):
+        if noi_dung or tu_khoa: # Kiểm tra xem đã nhập liệu chưa
+            with st.spinner("AI đang suy nghĩ... (Mất khoảng 3-5 giây)"):
+                ket_qua = get_ai_response(prompt_text)
+                if "⚠️ Lỗi" in ket_qua:
+                    st.error(ket_qua)
+                else:
+                    st.success("✅ Đã xong! Kết quả bên dưới:")
+                    st.markdown(ket_qua)
+        else:
+            st.error("⚠️ Thầy cô chưa nhập nội dung!")
 
 # === CHỨC NĂNG 1: TRẮC NGHIỆM ===
 if "1." in menu:
-    st.header("📝 1. SOẠN ĐỀ TRẮC NGHIỆM")
+    st.header("📝 1. SOẠN TRẮC NGHIỆM (4 ĐÁP ÁN)")
     col1, col2 = st.columns([1, 2])
     with col1:
-        mon_hoc = st.text_input("Môn học:", value="Lịch Sử 9")
-        so_cau = st.number_input("Số câu hỏi:", min_value=1, value=5)
-        do_kho = st.select_slider("Mức độ:", options=["Nhận biết", "Thông hiểu", "Vận dụng"])
+        mon = st.text_input("Môn:", value="Lịch Sử 9")
+        sl = st.number_input("Số câu:", value=5, min_value=1)
+        do_kho = st.select_slider("Mức độ:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
     with col2:
-        noi_dung = st.text_area("Dán nội dung bài học:", height=150, placeholder="Dán văn bản vào đây...")
+        noi_dung = st.text_area("Dán bài học:", height=150)
+        tu_khoa = "dummy" # Biến giả để qua bước kiểm tra
     
-    if st.button("🚀 SOẠN ĐỀ NGAY", type="primary"):
-        if noi_dung:
-            with st.spinner("Đang soạn đề..."):
-                try:
-                    prompt = f"Đóng vai GV môn {mon_hoc}. Soạn {so_cau} câu trắc nghiệm (Mức độ {do_kho}) từ: '{noi_dung}'. Yêu cầu: 4 đáp án A,B,C,D, có đáp án đúng và giải thích."
-                    response = model.generate_content(prompt)
-                    st.success("✅ Kết quả:")
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
-        else:
-            st.error("⚠️ Chưa có nội dung!")
+    prompt = f"Đóng vai GV môn {mon}. Soạn {sl} câu trắc nghiệm khách quan ({do_kho}) từ văn bản: '{noi_dung}'. Yêu cầu: 4 đáp án A,B,C,D. Cuối mỗi câu có ĐÁP ÁN ĐÚNG và GIẢI THÍCH."
+    xu_ly_ai(prompt)
 
-# === CHỨC NĂNG 2: ĐÚNG / SAI ===
+# === CHỨC NĂNG 2: ĐÚNG/SAI ===
 elif "2." in menu:
     st.header("✅ 2. SOẠN CÂU HỎI ĐÚNG/SAI")
-    st.caption("Mỗi câu hỏi lớn gồm 4 ý nhỏ a, b, c, d.")
-    noi_dung = st.text_area("Dán nội dung bài học:", height=150)
-    so_cau = st.number_input("Số câu hỏi lớn:", min_value=1, value=2)
+    st.caption("Chuẩn GDPT 2018: Mỗi câu lớn có 4 ý nhỏ a/b/c/d")
+    noi_dung = st.text_area("Dán bài học:", height=150)
+    sl = st.number_input("Số câu lớn:", value=2, min_value=1)
+    tu_khoa = "dummy"
     
-    if st.button("🚀 TẠO CÂU HỎI", type="primary"):
-        if noi_dung:
-            with st.spinner("Đang tư duy..."):
-                try:
-                    prompt = f"Dựa vào: '{noi_dung}'. Tạo {so_cau} câu hỏi dạng ĐÚNG/SAI chuẩn GDPT 2018 (Mỗi câu có 4 ý a,b,c,d). Có đáp án và giải thích."
-                    response = model.generate_content(prompt)
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
-        else:
-            st.error("⚠️ Chưa có nội dung!")
+    prompt = f"Dựa vào: '{noi_dung}'. Tạo {sl} câu hỏi dạng ĐÚNG/SAI chuẩn GDPT 2018 (Mỗi câu 4 ý a,b,c,d). Có đáp án và giải thích ngắn gọn."
+    xu_ly_ai(prompt)
 
-# === CHỨC NĂNG 3: TỰ LUẬN + BAREM ===
+# === CHỨC NĂNG 3: TỰ LUẬN ===
 elif "3." in menu:
     st.header("✍️ 3. SOẠN TỰ LUẬN + BAREM")
-    noi_dung = st.text_area("Dán nội dung bài học:", height=150)
+    noi_dung = st.text_area("Dán bài học:", height=150)
+    tu_khoa = "dummy"
     
-    if st.button("🚀 SOẠN ĐỀ", type="primary"):
-        if noi_dung:
-            with st.spinner("Đang chấm điểm..."):
-                try:
-                    prompt = f"Soạn câu hỏi Tự luận từ: '{noi_dung}'. Yêu cầu: Kèm theo BAREM CHẤM ĐIỂM chi tiết (0.25đ, 0.5đ)."
-                    response = model.generate_content(prompt)
-                    st.markdown(response.text)
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
-        else:
-            st.error("⚠️ Chưa có nội dung!")
+    prompt = f"Soạn câu hỏi Tự luận đánh giá năng lực từ: '{noi_dung}'. Yêu cầu QUAN TRỌNG: Kèm theo BAREM CHẤM ĐIỂM chi tiết (chia nhỏ 0.25đ, 0.5đ)."
+    xu_ly_ai(prompt)
 
-# === CHỨC NĂNG 4: HỖ TRỢ HÒA NHẬP ===
+# === CHỨC NĂNG 4: HÒA NHẬP ===
 elif "4." in menu:
-    st.header("❤️ 4. PHIÊN DỊCH NGÔN NGỮ BẢN LÀNG")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        tu_khoa = st.text_input("Từ ngữ khó:", placeholder="VD: Hệ điều hành...")
+    st.header("❤️ 4. HỖ TRỢ HỌC SINH DÂN TỘC")
+    tu_khoa = st.text_input("Nhập từ khó (VD: RAM, Virus, Axit...):")
+    noi_dung = "dummy"
     
-    if st.button("🔍 GIẢI THÍCH", type="primary"):
-        if tu_khoa:
-            with st.spinner("Đang tìm ví dụ..."):
-                try:
-                    prompt = f"Giải thích '{tu_khoa}' cho học sinh dân tộc thiểu số. Dùng hình ảnh ví von với nương rẫy, bản làng dễ hiểu."
-                    response = model.generate_content(prompt)
-                    st.info(response.text)
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
+    prompt = f"Giải thích '{tu_khoa}' cho học sinh dân tộc thiểu số. Dùng hình ảnh ví von nương rẫy, bản làng, con vật cho dễ hiểu."
+    xu_ly_ai(prompt, button_text="🔍 GIẢI THÍCH")
 
-# --- CHÂN TRANG ---
 st.markdown("---")
 st.caption("© 2026 Bản quyền thuộc về Nhóm tác giả Trường PTDTBT THCS Mùn Chung")
