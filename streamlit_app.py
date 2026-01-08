@@ -7,159 +7,201 @@ from io import BytesIO
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import PyPDF2
 
-# --- CẤU HÌNH ---
-st.set_page_config(page_title="Hệ Thống Ra Đề", page_icon="🏫", layout="wide")
+# --- CẤU HÌNH TRANG ---
+st.set_page_config(page_title="Hệ Thống Ra Đề - 1 Key", page_icon="🏫", layout="wide")
 
-# --- API KEYS ---
+# --- CẤU HÌNH API KEY ---
+# Chỉ sử dụng 1 Key duy nhất theo yêu cầu
 API_KEYS = [
-    "AIzaSyC7DAv7xrQ7rndZ72Sogogb4CWBdt1xpRM",
-    "AIzaSyBsBd5X79HwzHmZUStQFrAC1ixhfpjeWV0",
-    "AIzaSyBzMYO-OC9In_ilgLbg1rc57Pl7K8a-ay0"
+    "AIzaSyB_A61JcSMdmUjqCcHEc3Sg-Vv79j-yarE"
 ]
 
-# --- HÀM TỰ ĐỘNG TÌM MODEL (VŨ KHÍ BÍ MẬT) ---
+# --- 1. HÀM TỰ ĐỘNG TÌM MODEL TỐT NHẤT ---
 def get_best_available_model(api_key):
     """Hỏi Google xem model nào đang rảnh và dùng được"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # Lọc ra các model hỗ trợ tạo văn bản (generateContent)
+            # Ưu tiên tìm các model Flash hoặc Pro mới nhất
+            for model in data.get('models', []):
+                name = model['name'].replace('models/', '')
+                if 'generateContent' in model.get('supportedGenerationMethods', []):
+                    if 'gemini-1.5-flash' in name: return name
+                    if 'gemini-1.5-pro' in name: return name
+            # Nếu không tìm thấy cái ưu tiên, lấy cái đầu tiên hỗ trợ generateContent
             for model in data.get('models', []):
                 if 'generateContent' in model.get('supportedGenerationMethods', []):
-                    # Ưu tiên các model Flash hoặc Pro vì nó thông minh
-                    if 'flash' in model['name'] or 'pro' in model['name']:
-                        return model['name'].replace('models/', '')
-            
-            # Nếu không tìm thấy cái ưu tiên, lấy cái đầu tiên tìm được
-            if data.get('models'):
-                return data['models'][0]['name'].replace('models/', '')
+                    return model['name'].replace('models/', '')
     except:
         pass
-    return "gemini-1.5-flash" # Fallback cuối cùng nếu không dò được
+    return "gemini-1.5-flash" # Model dự phòng
 
-# --- HÀM GỌI API CHÍNH ---
+# --- 2. HÀM GỌI API ---
 def call_gemini_auto(prompt):
     logs = []
+    
+    # Lấy key duy nhất
+    key = API_KEYS[0]
+    clean_key = key.strip()
+    
+    # Bước 1: Dò model
+    current_model = get_best_available_model(clean_key)
+    
+    # Bước 2: Gọi API
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={clean_key}"
+    headers = {'Content-Type': 'application/json'}
+    
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+    }
 
-    for i, key in enumerate(API_KEYS):
-        clean_key = key.strip()
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
         
-        # Bước 1: Tự động dò tìm model phù hợp với Key này
-        current_model = get_best_available_model(clean_key)
-        
-        # Bước 2: Gọi API với model vừa tìm được
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={clean_key}"
-        headers = {'Content-Type': 'application/json'}
-        
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-            ]
-        }
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        elif response.status_code == 429:
+            return "⚠️ HỆ THỐNG QUÁ TẢI (429). Bạn đang thao tác quá nhanh. Vui lòng đợi 1 phút rồi thử lại."
+        else:
+            return f"⚠️ Lỗi kết nối ({response.status_code}). Chi tiết: {response.text}"
 
-        try:
-            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
-            
-            if response.status_code == 200:
-                return response.json()['candidates'][0]['content']['parts'][0]['text']
-            elif response.status_code == 429:
-                logs.append(f"Key {i+1}: Quá tải.")
-                continue
-            else:
-                logs.append(f"Key {i+1} ({current_model}): Lỗi {response.status_code}")
-                continue
+    except Exception as e:
+        return f"⚠️ Lỗi mạng: {str(e)}"
 
-        except Exception as e:
-            logs.append(f"Key {i+1}: Lỗi mạng {str(e)}")
-            continue
-
-    return f"⚠️ KHÔNG THỂ TẠO ĐỀ. Lỗi chi tiết:\n{'; '.join(logs)}\n(Hãy thử lại sau 1 phút)"
-
-# --- CÁC HÀM XỬ LÝ FILE (GIỮ NGUYÊN) ---
+# --- 3. HÀM XỬ LÝ FILE ---
 def read_file(uploaded_file):
     try:
         if uploaded_file.name.endswith('.pdf'):
             reader = PyPDF2.PdfReader(uploaded_file)
-            return "".join([page.extract_text() or "" for page in reader.pages])
+            text = "".join([page.extract_text() or "" for page in reader.pages])
+            return text
         elif uploaded_file.name.endswith('.docx'):
             doc = Document(uploaded_file)
             return "\n".join([p.text for p in doc.paragraphs])
         return ""
     except: return "Lỗi đọc file."
 
-def create_word(content, topic):
+# --- 4. HÀM TẠO FILE WORD ---
+def create_word(content, topic, grade_info):
     doc = Document()
+    
+    # Header tên trường
     h = doc.add_heading('TRƯỜNG PTDTBT THCS MÙN CHUNG', 0)
     h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Tiêu đề đề thi
     p = doc.add_paragraph(f'ĐỀ KIỂM TRA: {topic.upper()}')
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph("Họ tên: ................................................. Lớp: ............")
+    
+    # Thông tin học sinh
+    doc.add_paragraph(f"Lớp: {grade_info}      Họ và tên: .................................................")
     doc.add_paragraph("-" * 60)
+    
+    # Nội dung đề
     doc.add_paragraph(content)
+    
     buffer = BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
-# --- GIAO DIỆN ---
-st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 HỆ THỐNG HỖ TRỢ RA ĐỀ THI</h1>", unsafe_allow_html=True)
-st.markdown("<div style='text-align: center; color: grey;'>© Bản quyền thuộc về trường PTDTBT THCS Mùn Chung</div>", unsafe_allow_html=True)
+# --- 5. GIAO DIỆN CHÍNH ---
+st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 HỆ THỐNG RA ĐỀ THI (1 KEY)</h1>", unsafe_allow_html=True)
 
+# Sidebar
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/9626/9626622.png", width=80)
-    st.header("Trạng thái")
-    st.success("✅ Chế độ: Tự động dò Model")
-    st.caption("Hệ thống sẽ tự tìm model tốt nhất hiện có.")
+    st.success("✅ Đang chạy Key cá nhân")
+    st.info("Hệ thống tự động dò tìm model ổn định nhất cho Key này.")
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(["⚡ Soạn Nhanh", "📂 Từ File", "📥 Tải Về"])
+# Tabs chức năng
+tab1, tab2, tab3 = st.tabs(["⚡ Soạn Theo Chủ Đề", "📂 Soạn Từ File", "📥 Tải Về & In"])
 
-# Tab 1
+# --- TAB 1: SOẠN THEO CHỦ ĐỀ ---
 with tab1:
     col1, col2 = st.columns(2)
     with col1:
-        topic = st.text_input("Chủ đề:", "Tác phẩm Lão Hạc")
-        grade = st.selectbox("Khối:", ["6", "7", "8", "9"])
+        topic = st.text_input("Nhập chủ đề / Bài học:", "Vợ chồng A Phủ")
+        # Chọn lớp từ 1 đến 12
+        grade = st.selectbox("Chọn Khối Lớp:", [str(i) for i in range(1, 13)], index=11) 
+        subject = st.text_input("Môn học (Tùy chọn):", "Ngữ Văn")
+        
     with col2:
-        num = st.slider("Số câu:", 5, 20, 10)
-        level = st.select_slider("Độ khó:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
+        num = st.slider("Số lượng câu hỏi:", 5, 40, 10)
+        level = st.select_slider("Mức độ khó:", ["Nhận biết", "Thông hiểu", "Vận dụng", "Vận dụng cao"])
 
-    if st.button("🚀 SOẠN ĐỀ NGAY", type="primary", use_container_width=True):
-        prompt = f"Đóng vai giáo viên lớp {grade}. Soạn {num} câu trắc nghiệm về chủ đề '{topic}'. Độ khó: {level}. Có đáp án chi tiết."
-        with st.spinner("Đang tìm model AI và soạn đề..."):
-            res = call_gemini_auto(prompt)
+    if st.button("🚀 BẮT ĐẦU SOẠN ĐỀ", type="primary", use_container_width=True):
+        # Tùy chỉnh lời nhắc (Prompt) dựa trên lớp học
+        context_prompt = ""
+        if int(grade) <= 5:
+            context_prompt = "Dùng ngôn ngữ đơn giản, dễ hiểu, phù hợp với tâm lý học sinh Tiểu học."
+        elif int(grade) <= 9:
+            context_prompt = "Dùng ngôn ngữ chuẩn mực, bám sát chương trình THCS."
+        else:
+            context_prompt = "Dùng ngôn ngữ học thuật, chính xác, bám sát cấu trúc đề thi THPT Quốc gia."
+
+        full_prompt = (
+            f"Bạn là giáo viên dạy môn {subject} lớp {grade}. "
+            f"Hãy soạn {num} câu trắc nghiệm (có 4 đáp án A,B,C,D) về chủ đề: '{topic}'. "
+            f"Độ khó: {level}. "
+            f"{context_prompt} "
+            f"Yêu cầu định dạng: Đề bài riêng và Đáp án chi tiết để ở cuối cùng."
+        )
+        
+        with st.spinner(f"Đang kết nối AI để soạn đề Lớp {grade}..."):
+            res = call_gemini_auto(full_prompt)
             st.session_state['res'] = res
             st.session_state['top'] = topic
+            st.session_state['gr'] = grade
             
             if "⚠️" in res: st.error(res)
-            else: st.success("Thành công!"); st.write(res)
+            else: st.success("Đã soạn xong!"); st.write(res)
 
-# Tab 2
+# --- TAB 2: SOẠN TỪ FILE ---
 with tab2:
-    f = st.file_uploader("Upload file tài liệu:", type=['pdf','docx'])
-    if st.button("🚀 PHÂN TÍCH & SOẠN", use_container_width=True):
+    f = st.file_uploader("Tải lên tài liệu (PDF/Word) để AI đọc:", type=['pdf','docx'])
+    grade_file = st.selectbox("Dành cho lớp:", [str(i) for i in range(1, 13)], index=8, key='gr_file')
+    
+    if st.button("🚀 PHÂN TÍCH & TẠO ĐỀ", use_container_width=True):
         if f:
-            with st.spinner("Đang xử lý..."):
+            with st.spinner("AI đang đọc tài liệu..."):
                 content = read_file(f)
-                if len(content) < 20: st.warning("File rỗng.")
+                if len(content) < 50: 
+                    st.warning("File quá ngắn hoặc không đọc được nội dung.")
                 else:
-                    prompt = f"Dựa vào văn bản: {content[:10000]}. Soạn 10 câu trắc nghiệm."
+                    prompt = (
+                        f"Dựa vào nội dung văn bản sau đây: \n'{content[:15000]}'... \n"
+                        f"Hãy đóng vai giáo viên lớp {grade_file}, soạn 10 câu hỏi trắc nghiệm ôn tập nội dung trên. "
+                        f"Có đáp án chi tiết."
+                    )
                     res = call_gemini_auto(prompt)
                     st.session_state['res'] = res
-                    st.session_state['top'] = f.name
+                    st.session_state['top'] = f"Tài liệu: {f.name}"
+                    st.session_state['gr'] = grade_file
+                    
                     if "⚠️" in res: st.error(res)
                     else: st.success("Thành công!"); st.write(res)
 
-# Tab 3
+# --- TAB 3: TẢI VỀ ---
 with tab3:
     if 'res' in st.session_state:
-        txt = st.text_area("Nội dung đề:", st.session_state['res'], height=300)
-        docx = create_word(txt, st.session_state['top'])
-        st.download_button("📥 TẢI FILE WORD", docx, f"{st.session_state['top']}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-    else: st.info("Chưa có dữ liệu.")
+        st.info("Xem lại nội dung trước khi tải về:")
+        txt_edit = st.text_area("Chỉnh sửa nhanh:", st.session_state['res'], height=300)
+        
+        # Nút tải về
+        docx = create_word(txt_edit, st.session_state['top'], st.session_state.get('gr', ''))
+        st.download_button(
+            label="📥 TẢI FILE WORD (.DOCX)", 
+            data=docx, 
+            file_name=f"De_Thi_{st.session_state['top']}.docx", 
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
+            use_container_width=True
+        )
+    else:
+        st.write("👈 Chưa có dữ liệu. Vui lòng tạo đề ở Tab 1 hoặc Tab 2 trước.")
