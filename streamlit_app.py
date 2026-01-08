@@ -1,44 +1,72 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
+import json
 from docx import Document
 from io import BytesIO
 import PyPDF2
-import time
 
 # --- CẤU HÌNH TRANG ---
-st.set_page_config(
-    page_title="Trợ Lý Soạn Đề",
-    page_icon="🏫",
-    layout="wide"
-)
+st.set_page_config(page_title="Hệ Thống Ra Đề", page_icon="🏫", layout="wide")
 
-# --- DANH SÁCH KEY (Đã kiểm tra hoạt động) ---
+# --- 3 KEY CỦA BẠN (Đã tích hợp) ---
 API_KEYS = [
     "AIzaSyC7DAv7xrQ7rndZ72Sogogb4CWBdt1xpRM",
     "AIzaSyBsBd5X79HwzHmZUStQFrAC1ixhfpjeWV0",
     "AIzaSyBzMYO-OC9In_ilgLbg1rc57Pl7K8a-ay0"
 ]
 
-# --- HÀM XỬ LÝ (GIỮ NGUYÊN) ---
-def read_pdf(file):
-    try:
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() or ""
-        return text
-    except: return "Không đọc được file PDF này."
+# --- HÀM GỌI AI TRỰC TIẾP (KHÔNG CẦN THƯ VIỆN GOOGLE) ---
+def call_gemini_smart(prompt):
+    # Dùng model Flash cho nhanh
+    url_base = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    
+    # Cấu hình để AI không từ chối trả lời (Chống kiểm duyệt gắt)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+    }
+    headers = {'Content-Type': 'application/json'}
 
-def read_docx(file):
-    try:
-        doc = Document(file)
-        return "\n".join([p.text for p in doc.paragraphs])
-    except: return "Không đọc được file Word này."
+    # Vòng lặp thử Key
+    for key in API_KEYS:
+        try:
+            full_url = f"{url_base}?key={key}"
+            response = requests.post(full_url, headers=headers, data=json.dumps(payload), timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data['candidates'][0]['content']['parts'][0]['text']
+            elif response.status_code == 429: # Quá tải
+                continue 
+            else: # Lỗi khác
+                print(f"Key lỗi: {response.text}")
+                continue
+        except Exception:
+            continue
+            
+    return "⚠️ LỖI MẠNG: Đã thử tất cả các kênh nhưng không kết nối được. Vui lòng kiểm tra Wifi."
 
-def create_docx(content, topic):
+# --- HÀM XỬ LÝ FILE ---
+def read_file(uploaded_file):
+    try:
+        if uploaded_file.name.endswith('.pdf'):
+            reader = PyPDF2.PdfReader(uploaded_file)
+            return "".join([page.extract_text() or "" for page in reader.pages])
+        elif uploaded_file.name.endswith('.docx'):
+            doc = Document(uploaded_file)
+            return "\n".join([p.text for p in doc.paragraphs])
+        return ""
+    except: return "Lỗi đọc file."
+
+def create_word(content, topic):
     doc = Document()
     doc.add_heading('TRƯỜNG PTDTBT THCS MÙN CHUNG', 0)
-    doc.add_paragraph(f'ĐỀ KIỂM TRA CHỦ ĐỀ: {topic.upper()}')
+    doc.add_paragraph(f'ĐỀ KIỂM TRA: {topic.upper()}')
     doc.add_paragraph("Họ tên: ................................................. Lớp: ............")
     doc.add_paragraph("-" * 60)
     doc.add_paragraph(content)
@@ -47,95 +75,62 @@ def create_docx(content, topic):
     buffer.seek(0)
     return buffer
 
-# --- HÀM GỌI AI THÔNG MINH (MULTI-MODEL) ---
-def get_gemini_response_smart(prompt):
-    # Danh sách model ưu tiên (Mới nhất -> Cũ hơn)
-    # Vì đã update requirements.txt nên máy chủ sẽ hiểu các tên này
-    priority_models = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-1.0-pro",
-        "gemini-pro"
-    ]
-
-    for key in API_KEYS:
-        try:
-            genai.configure(api_key=key)
-            
-            # Thử từng model trong danh sách
-            for model_name in priority_models:
-                try:
-                    # Cấu hình an toàn để tránh lỗi safety filter
-                    model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(prompt)
-                    return response.text
-                except Exception as e:
-                    # Nếu lỗi 404 (không tìm thấy model) -> Thử model tiếp theo
-                    if "404" in str(e) or "not found" in str(e):
-                        continue
-                    # Nếu lỗi 429 (Quá tải) -> Break để đổi Key khác
-                    elif "429" in str(e):
-                        break
-                    else:
-                        break # Lỗi khác đổi key
-        except:
-            continue
-            
-    return "⚠️ HỆ THỐNG ĐANG BẬN. Vui lòng thử lại sau 30 giây."
-
 # --- GIAO DIỆN ---
 st.markdown("<h1 style='text-align: center; color: #004d99;'>🏫 HỆ THỐNG HỖ TRỢ RA ĐỀ THI</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center;'>© Bản quyền thuộc về trường PTDTBT THCS Mùn Chung</p>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; color: grey;'>© Bản quyền thuộc về trường PTDTBT THCS Mùn Chung</div>", unsafe_allow_html=True)
+st.markdown("---")
 
-if st.session_state.get('first', True):
-    st.info("💡 Mẹo: Trên điện thoại, bấm mũi tên `>` góc trái trên để xem menu.")
-    st.session_state['first'] = False
+# Menu Mobile
+if st.session_state.get('check_mobile', True):
+    st.info("💡 Lưu ý: Trên điện thoại, bấm mũi tên `>` góc trái trên để mở menu.")
+    st.session_state['check_mobile'] = False
 
-# Sidebar
 with st.sidebar:
     st.header("Cấu hình")
-    st.success("Trạng thái: Đã kết nối")
+    st.success("Trạng thái: Đã kết nối (Direct Mode)")
 
 # Tabs
 tab1, tab2, tab3 = st.tabs(["⚡ Soạn Nhanh", "📂 Từ File", "📥 Tải Về"])
 
-# Tab 1
+# Tab 1: Soạn Nhanh
 with tab1:
     c1, c2 = st.columns(2)
     with c1:
         topic = st.text_input("Chủ đề:", "Lịch sử Điện Biên Phủ")
-        grade = st.selectbox("Khối:", ["6", "7", "8", "9"])
+        grade = st.selectbox("Khối lớp:", ["6", "7", "8", "9"])
     with c2:
-        num = st.slider("Số câu:", 5, 20, 10)
-        lv = st.select_slider("Độ khó:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
+        num = st.slider("Số câu:", 5, 30, 10)
+        hard = st.select_slider("Độ khó:", ["Nhận biết", "Thông hiểu", "Vận dụng"])
     
-    if st.button("🚀 SOẠN ĐỀ NGAY", type="primary", use_container_width=True):
-        p = f"Đóng vai giáo viên lớp {grade}. Soạn {num} câu trắc nghiệm về '{topic}'. Độ khó: {lv}. Có đáp án chi tiết cuối bài."
-        with st.spinner("Đang kết nối hệ thống AI..."):
-            res = get_gemini_response_smart(p)
+    if st.button("🚀 SOẠN ĐỀ NGAY", use_container_width=True):
+        prompt = f"Đóng vai giáo viên lớp {grade}. Soạn {num} câu trắc nghiệm về '{topic}'. Độ khó: {hard}. Có đáp án chi tiết cuối bài."
+        with st.spinner("Hệ thống đang soạn thảo..."):
+            res = call_gemini_smart(prompt)
             st.session_state['res'] = res
             st.session_state['top'] = topic
-            st.success("Đã xong! Qua tab Tải Về để lấy file.")
-            st.write(res)
+            if "⚠️" in res: st.error(res)
+            else: st.success("Xong! Qua tab Tải Về để lấy file."); st.write(res)
 
-# Tab 2
+# Tab 2: Từ File
 with tab2:
     f = st.file_uploader("Tải tài liệu (PDF/Word):", type=['pdf','docx'])
     if st.button("🚀 PHÂN TÍCH & SOẠN", use_container_width=True):
         if f:
-            with st.spinner("Đang đọc tài liệu..."):
-                content = read_pdf(f) if f.name.endswith('.pdf') else read_docx(f)
-                p = f"Dựa vào văn bản sau: {content}. Hãy soạn 10 câu trắc nghiệm có đáp án."
-                res = get_gemini_response_smart(p)
-                st.session_state['res'] = res
-                st.session_state['top'] = f.name
-                st.success("Đã xong! Qua tab Tải Về để lấy file.")
-                st.write(res)
+            with st.spinner("Đang đọc và phân tích..."):
+                content = read_file(f)
+                if len(content) < 20: st.warning("File không có nội dung chữ.")
+                else:
+                    prompt = f"Dựa vào văn bản: {content[:15000]}. Soạn 10 câu trắc nghiệm có đáp án."
+                    res = call_gemini_smart(prompt)
+                    st.session_state['res'] = res
+                    st.session_state['top'] = f.name
+                    if "⚠️" in res: st.error(res)
+                    else: st.success("Xong! Qua tab Tải Về để lấy file."); st.write(res)
 
-# Tab 3
+# Tab 3: Tải Về
 with tab3:
     if 'res' in st.session_state:
-        final = st.text_area("", st.session_state['res'], height=300)
-        data = create_docx(final, st.session_state['top'])
-        st.download_button("📥 TẢI FILE WORD", data, f"{st.session_state['top']}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-    else: st.info("Chưa có dữ liệu đề thi.")
+        txt = st.text_area("", st.session_state['res'], height=300)
+        docx = create_word(txt, st.session_state['top'])
+        st.download_button("📥 TẢI FILE WORD", docx, f"{st.session_state['top']}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+    else: st.info("Chưa có dữ liệu.")
