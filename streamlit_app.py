@@ -19,34 +19,45 @@ MY_API_KEY = "AIzaSyBY29kMfQWCB7ASsBrWcPHKn8EG8kYq_Bc"
 
 # ==============================================================================
 
-# --- HÀM GỌI AI GEMINI ---
+# --- HÀM GỌI AI GEMINI (TỰ ĐỘNG SỬA LỖI 404) ---
 def call_gemini(prompt):
     if "DÁN_MÃ_KEY" in MY_API_KEY or len(MY_API_KEY) < 30:
-        return "⚠️ LỖI: Bạn chưa nhập API Key vào dòng 14 trong code!"
+        return "⚠️ LỖI: Bạn chưa nhập API Key vào dòng 16 trong code!"
 
-    # Dùng model Flash cho tốc độ nhanh nhất và ít bị ngắt kết nối
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={MY_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
+    # Danh sách các model để thử (Nếu cái đầu lỗi 404 thì tự thử cái sau)
+    models_to_try = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro-latest"]
     
-    # Cấu hình an toàn để AI không từ chối trả lời
+    headers = {'Content-Type': 'application/json'}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
         ]
     }
 
-    try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=45)
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            return f"❌ Lỗi từ Google (Code {response.status_code}): {response.text}"
-    except Exception as e:
-        return f"❌ Lỗi kết nối mạng: {str(e)}"
+    # Vòng lặp thử từng model
+    for model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={MY_API_KEY}"
+        try:
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=45)
+            
+            # Nếu thành công (200) -> Trả về kết quả ngay
+            if response.status_code == 200:
+                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            
+            # Nếu lỗi 404 (Sai tên model) -> Bỏ qua, thử model tiếp theo trong danh sách
+            elif response.status_code == 404:
+                continue 
+            
+            # Nếu lỗi khác (hết hạn mức, key sai) -> Báo lỗi ngay
+            else:
+                return f"❌ Lỗi (Code {response.status_code}): {response.text}"
+                
+        except Exception as e:
+            continue # Lỗi mạng thì thử cái tiếp theo
+
+    return "❌ Không tìm thấy model nào hoạt động với Key này. Hãy thử tạo Key mới."
 
 # --- HÀM ĐỌC FILE TẢI LÊN ---
 def read_uploaded_file(uploaded_file):
