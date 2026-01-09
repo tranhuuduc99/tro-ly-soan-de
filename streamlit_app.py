@@ -13,9 +13,9 @@ st.set_page_config(page_title="Phần mềm Soạn đề 2.0", page_icon="🛠�
 
 # --- DANH SÁCH KEY CỦA BẠN ---
 API_KEYS = [
-    "AIzaSyDto59lBW1gswhSkZeokoBpC3nZn1LiXsU",  # Key 1
-    "AIzaSyDl0g9kd5p7jRBkTU1WYx8x8VTBykvlWI0",  # Key 2
-    "AIzaSyAdyIu_JyQX2lahQwbDW6ipK_nm_gWzddo"   # Key 3
+    "AIzaSyCvUq0EdMJLYmkHr1ghIIJt2pSMREk8Qzc",  # Key 1
+    "AIzaSyBY29kMfQWCB7ASsBrWcPHKn8EG8kYq_Bc",  # Key 2
+    "AIzaSyBy2soAj-LiurCgkOxMyMhJhRITbHVajDY"   # Key 3
 ]
 
 # --- 1. HÀM TỰ ĐỘNG TÌM ĐÚNG TÊN MODEL (Fix 404) ---
